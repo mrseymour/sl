@@ -8,13 +8,25 @@ const urlsToCache = [
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then(cache => cache.addAll(urlsToCache))
+      .then(cache => {
+        // We wrap this in a catch so one bad file doesn't break the whole app
+        return cache.addAll(urlsToCache).catch(err => console.error("Cache failed:", err));
+      })
   );
 });
 
 self.addEventListener('fetch', event => {
-  // Basic pass-through (Network first, fall back to cache if offline)
+  // 1. IGNORE API CALLS (Let them go straight to network)
+  // If we try to cache POST/PUT or Lambda calls, it will break.
+  if (event.request.method !== 'GET' || event.request.url.includes('lambda-url')) {
+    return; 
+  }
+
+  // 2. For Static Files (HTML, Manifest), try Network -> Fallback to Cache
   event.respondWith(
-    fetch(event.request).catch(() => caches.match(event.request))
+    fetch(event.request)
+      .catch(() => {
+        return caches.match(event.request);
+      })
   );
 });
