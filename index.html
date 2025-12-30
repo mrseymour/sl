@@ -173,20 +173,26 @@
     }
 
 	async function fetchItems() {
-			// SAFETY CHECK: Don't refresh if the user is currently editing an item!
-			// This prevents the keyboard from closing while you type.
+			// 1. SAFETY CHECK: Don't refresh if user is typing
 			const isUserBusy = allItems.some(item => item.isEditing);
-			if (isUserBusy) {
-				console.log("Skipping auto-update: User is editing.");
-				return;
-			}
+			if (isUserBusy) return;
 
-			const data = await api('GET');
+			// 2. GET DATA
+			let data = await api('GET');
+			data = data || [];
+
+			// 3. THE FIX: SORT BOTH LISTS BEFORE COMPARING
+			// We create temporary "comparison strings" by sorting by name
+			const sortFunc = (a, b) => a.item_name.localeCompare(b.item_name);
 			
-			// Only render if data actually changed (prevents screen flickering)
-			if (JSON.stringify(data) !== JSON.stringify(allItems)) {
-				allItems = data || [];
-				renderList();
+			const newJson = JSON.stringify([...data].sort(sortFunc));
+			const oldJson = JSON.stringify([...allItems].sort(sortFunc));
+
+			// 4. ONLY RENDER IF CONTENT ACTUALLY CHANGED
+			if (newJson !== oldJson) {
+				console.log("Syncing changes...");
+				allItems = data; // Update the source of truth
+				renderList();    // Redraw
 			}
 		}
 
