@@ -172,7 +172,7 @@
         }
     }
 
-    async function fetchItems() {
+async function fetchItems() {
         const data = await api('GET');
         allItems = data || [];
         renderList();
