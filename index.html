@@ -172,11 +172,30 @@
         }
     }
 
-async function fetchItems() {
-        const data = await api('GET');
-        allItems = data || [];
-        renderList();
-    }
+	async function fetchItems() {
+			// SAFETY CHECK: Don't refresh if the user is currently editing an item!
+			// This prevents the keyboard from closing while you type.
+			const isUserBusy = allItems.some(item => item.isEditing);
+			if (isUserBusy) {
+				console.log("Skipping auto-update: User is editing.");
+				return;
+			}
+
+			const data = await api('GET');
+			
+			// Only render if data actually changed (prevents screen flickering)
+			if (JSON.stringify(data) !== JSON.stringify(allItems)) {
+				allItems = data || [];
+				renderList();
+			}
+		}
+
+		// --- 8. AUTO-UPDATE LOOP ---
+		// Check for updates every 10 seconds (More frequent is fine for DynamoDB)
+		setInterval(fetchItems, 10000); 
+
+		// Initial Load
+		fetchItems();
 
     // --- 5. RENDER LOGIC ---
     function renderList() {
