@@ -160,7 +160,8 @@
 
     async function fetchItems() {
         try {
-            const res = await fetch(API_URL);
+            // Added { cache: "no-store" } to prevent stale data
+            const res = await fetch(API_URL, { cache: "no-store" });
             const data = await res.json();
             renderList(data);
         } catch (error) {
