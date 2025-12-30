@@ -24,7 +24,8 @@
         .input-card { background: var(--card-bg); padding: 16px; border-radius: var(--radius); box-shadow: var(--shadow); margin-bottom: 20px; transition: all 0.2s; }
         .input-row { display: flex; gap: 10px; margin-bottom: 10px; }
         input, select { border: 1px solid #E5E7EB; border-radius: 12px; padding: 12px; font-size: 1rem; outline: none; background: #F9FAFB; width: 100%; box-sizing: border-box; }
-        input:focus, select:focus { border-color: var(--primary); background: white; }
+		input:focus, select:focus { border-color: var(--primary); background: transparent; }
+		.real-input { position: relative; z-index: 2; background: transparent; }
         
         /* AUTOCOMPLETE GHOST */
         .autocomplete-wrapper { position: relative; width: 100%; flex-grow: 1; }
@@ -109,11 +110,11 @@
 
 <script>
     // --- 1. CONFIGURATION ---
-    const API_URL = "https://egs3mnycu7jr724qappinabedi0qbsvh.lambda-url.us-east-1.on.aws/";
+    const API_URL = "https://YOUR_LAMBDA_URL_HERE.lambda-url.us-east-1.on.aws/"; // <--- CHECK THIS
     let userToken = localStorage.getItem('google_token');
     let userEmail = localStorage.getItem('user_email');
     
-    // --- 2. DATA (Ported from PHP) ---
+    // --- 2. DATA ---
     const groceryMapping = {
         "Milk": "Dairy", "Eggs": "Dairy", "Butter": "Dairy", "Cheese": "Dairy", "Yogurt": "Dairy", "Cream": "Dairy",
         "Apples": "Produce", "Bananas": "Produce", "Avocados": "Produce", "Onions": "Produce", "Potatoes": "Produce", "Carrots": "Produce",
@@ -125,7 +126,7 @@
         "Toilet Paper": "Household", "Paper Towels": "Household", "Soap": "Household", "Detergent": "Household"
     };
     const groceryItems = Object.keys(groceryMapping);
-    let allItems = []; // Local cache of items
+    let allItems = []; 
 
     // --- 3. AUTHENTICATION ---
     if (userToken) {
@@ -135,7 +136,6 @@
     }
 
     function handleCredentialResponse(response) {
-        // Decode JWT to get email (for display only, real verification happens on server if you enable it)
         const payload = JSON.parse(atob(response.credential.split('.')[1]));
         userToken = response.credential;
         userEmail = payload.email;
@@ -153,7 +153,7 @@
         location.reload();
     }
 
-    // --- 4. CORE API FUNCTIONS ---
+    // --- 4. CORE API ---
     async function api(method, body = {}) {
         try {
             const res = await fetch(API_URL, {
@@ -168,40 +168,38 @@
             return await res.json();
         } catch (e) {
             console.error(e);
-            alert("Connection error. Check console.");
         }
     }
 
-	async function fetchItems() {
-			// 1. SAFETY CHECK: Don't refresh if user is typing
-			const isUserBusy = allItems.some(item => item.isEditing);
-			if (isUserBusy) return;
+    async function fetchItems() {
+        // Safety: Don't refresh while typing
+        const isUserBusy = allItems.some(item => item.isEditing) || document.activeElement.tagName === 'INPUT';
+        if (isUserBusy) return;
 
-			// 2. GET DATA
-			let data = await api('GET');
-			data = data || [];
+        let data = await api('GET');
+        data = data || [];
 
-			// 3. THE FIX: SORT BOTH LISTS BEFORE COMPARING
-			// We create temporary "comparison strings" by sorting by name
-			const sortFunc = (a, b) => a.item_name.localeCompare(b.item_name);
-			
-			const newJson = JSON.stringify([...data].sort(sortFunc));
-			const oldJson = JSON.stringify([...allItems].sort(sortFunc));
+        // Sort to prevent flashing: Category -> Status -> Name
+        const sortFunc = (a, b) => {
+             if (a.status !== b.status) return a.status - b.status;
+             return a.item_name.localeCompare(b.item_name);
+        };
+        
+        const newJson = JSON.stringify([...data].sort(sortFunc));
+        const oldJson = JSON.stringify([...allItems].sort(sortFunc));
 
-			// 4. ONLY RENDER IF CONTENT ACTUALLY CHANGED
-			if (newJson !== oldJson) {
-				console.log("Syncing changes...");
-				allItems = data; // Update the source of truth
-				renderList();    // Redraw
-			}
-		}
-
-		// --- 8. AUTO-UPDATE LOOP ---
-		// Check for updates every 10 seconds (More frequent is fine for DynamoDB)
-		setInterval(fetchItems, 10000); 
-
-		// Initial Load
-		fetchItems();
+        if (newJson !== oldJson) {
+            console.log("Syncing...");
+            // Preserve edit state if we just happened to catch a refresh
+            const editingItem = allItems.find(i => i.isEditing);
+            allItems = data;
+            if(editingItem) {
+                const match = allItems.find(i => i.item_name === editingItem.item_name);
+                if(match) match.isEditing = true;
+            }
+            renderList();
+        }
+    }
 
     // --- 5. RENDER LOGIC ---
     function renderList() {
@@ -209,12 +207,12 @@
         const storeFilter = document.getElementById('filter-store').value;
         listDiv.innerHTML = '';
 
-        // Sort: Category -> Status -> ID
         const sorted = allItems.sort((a, b) => {
-            if (a.status !== b.status) return a.status - b.status; // Pending first
+            if (a.status !== b.status) return a.status - b.status;
             const catA = a.category || 'Other';
             const catB = b.category || 'Other';
-            return catA.localeCompare(catB);
+            if (catA !== catB) return catA.localeCompare(catB);
+            return a.item_name.localeCompare(b.item_name);
         });
 
         let currentCat = '';
@@ -224,14 +222,12 @@
             if (storeFilter && item.store !== storeFilter) return;
             if (item.status === 1) hasCompleted = true;
 
-            // Header
             const cat = item.category || 'Other';
             if (cat !== currentCat && item.status === 0) {
                 currentCat = cat;
                 listDiv.innerHTML += `<div class="category-header">${cat}</div>`;
             }
 
-            // Card HTML
             const isDone = item.status === 1;
             const priceDisplay = parseFloat(item.price) > 0 ? `$${parseFloat(item.price).toFixed(2)}` : '';
             const details = [item.store, priceDisplay, item.note].filter(Boolean).join(' • ');
@@ -239,7 +235,6 @@
             const div = document.createElement('div');
             div.className = `item-card ${isDone ? 'completed' : ''}`;
             
-            // VIEW MODE
             if (!item.isEditing) {
                 div.innerHTML = `
                     <div class="item-top">
@@ -258,9 +253,8 @@
                         <button class="btn-delete" style="background:none;" onclick="deleteItem('${item.item_name}')">Delete</button>
                     </div>` : ''}
                 `;
-            } 
-            // EDIT MODE
-            else {
+            } else {
+                // EDIT MODE HTML
                 div.innerHTML = `
                     <div class="edit-mode-inputs">
                         <label style="font-size:0.8rem; font-weight:bold; color:var(--primary);">Editing ${item.item_name}</label>
@@ -271,9 +265,7 @@
                             <option ${item.store=='Thriftys'?'selected':''}>Thriftys</option>
                             <option ${item.store=='SaveOn'?'selected':''}>SaveOn</option>
                         </select>
-                        <div style="display:flex; gap:10px;">
-                            <input type="number" id="edit-price-${item.item_name}" value="${item.price}" placeholder="Price">
-                        </div>
+                        <input type="number" id="edit-price-${item.item_name}" value="${item.price}" placeholder="Price">
                         <input type="text" id="edit-note-${item.item_name}" value="${item.note}" placeholder="Note">
                         <div style="display:flex; gap:10px; margin-top:8px;">
                             <button class="btn-primary" onclick="saveEdit('${item.item_name}')">Save</button>
@@ -294,7 +286,6 @@
         const name = toTitleCase(input.value.trim());
         if (!name) return;
 
-        // Smart Category
         let cat = 'Other';
         for (const [key, val] of Object.entries(groceryMapping)) {
             if (name.toLowerCase().includes(key.toLowerCase())) cat = val;
@@ -308,18 +299,17 @@
             note: document.getElementById('add-note').value
         };
 
-        // Optimistic UI
+        // Optimistic
         allItems.unshift({ ...payload, status: 0 });
         renderList();
         input.value = ''; document.getElementById('add-price').value=''; document.getElementById('add-note').value='';
         document.getElementById('ghostInput').value = '';
 
         await api('POST', payload);
-        fetchItems(); // Sync real ID/Data
+        fetchItems();
     }
 
     async function updateStatus(name, action) {
-        // Optimistic UI
         const item = allItems.find(i => i.item_name === name);
         if (item) item.status = (action === 'gotit' ? 1 : 0);
         renderList();
@@ -340,17 +330,18 @@
         await api('DELETE', { action: 'clear_completed' });
     }
 
-    // Edit Logic
     function enableEdit(name) {
         const item = allItems.find(i => i.item_name === name);
         if(item) item.isEditing = true;
         renderList();
     }
+    
     function cancelEdit(name) {
         const item = allItems.find(i => i.item_name === name);
         if(item) item.isEditing = false;
         renderList();
     }
+
     async function saveEdit(name) {
         const item = allItems.find(i => i.item_name === name);
         if(!item) return;
@@ -359,7 +350,6 @@
         item.price = document.getElementById(`edit-price-${name}`).value;
         item.note = document.getElementById(`edit-note-${name}`).value;
         item.isEditing = false;
-        
         renderList();
         
         await api('PUT', {
@@ -368,34 +358,46 @@
             store: item.store,
             price: item.price,
             note: item.note,
-            category: item.category // Persist existing category
+            category: item.category
         });
     }
 
-    // --- 7. AUTOCOMPLETE HELPERS ---
-    const inputEl = document.getElementById('add-item');
-    const ghostEl = document.getElementById('ghostInput');
+    // --- 7. AUTOCOMPLETE LOGIC (Restored) ---
+    function setupAutocomplete(inputEl, ghostEl, submitCallback) {
+        if (!inputEl || !ghostEl) return;
 
-    inputEl.addEventListener('input', () => {
-        const val = inputEl.value;
-        const match = val ? groceryItems.find(i => i.toLowerCase().startsWith(val.toLowerCase())) : null;
-        ghostEl.value = (match && match.toLowerCase() !== val.toLowerCase()) ? val + match.slice(val.length) : "";
-    });
+        inputEl.addEventListener('input', () => {
+            const val = inputEl.value;
+            const match = val ? groceryItems.find(i => i.toLowerCase().startsWith(val.toLowerCase())) : null;
+            ghostEl.value = (match && match.toLowerCase() !== val.toLowerCase()) ? val + match.slice(val.length) : "";
+        });
 
-    inputEl.addEventListener('keydown', (e) => {
-        if ((e.key === 'Tab' || e.key === 'ArrowRight' || e.key === 'Enter') && ghostEl.value) {
-            e.preventDefault();
-            inputEl.value = toTitleCase(ghostEl.value);
-            ghostEl.value = "";
-            if (e.key === 'Enter') addItem();
-        } else if (e.key === 'Enter') {
-            addItem();
-        }
-    });
+        inputEl.addEventListener('keydown', (e) => {
+            if ((e.key === 'Tab' || e.key === 'ArrowRight' || e.key === 'Enter') && ghostEl.value) {
+                e.preventDefault();
+                inputEl.value = toTitleCase(ghostEl.value);
+                ghostEl.value = "";
+                if (e.key === 'Enter' && submitCallback) submitCallback();
+            } else if (e.key === 'Enter' && submitCallback) {
+                submitCallback();
+            }
+        });
+    }
 
     function toTitleCase(str) {
         return str.replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase());
     }
+
+    // Initialize Main Input
+    setupAutocomplete(
+        document.getElementById('add-item'), 
+        document.getElementById('ghostInput'), 
+        addItem
+    );
+
+    // Auto-update Loop
+    setInterval(fetchItems, 10000);
+    fetchItems();
 </script>
 
 </body>
